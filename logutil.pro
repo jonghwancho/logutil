@@ -6,3 +6,6 @@ CONFIG -= qt
 SOURCES += main.cpp
 
 LIBS += -lpthread
+
+HEADERS += \
+    logutil.h

@@ -1,90 +1,85 @@
 #include <iostream>
-#include <string>
-#include <string.h>
-#include <unistd.h>
-#include <queue>
-#include <fstream>
-#include <pthread.h>
-#include <sys/time.h>
+#include "logutil.h"
+//#include <unistd.h>
 
 using namespace std;
 
-#define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
+//class Logger {
+//public:
+//    string stream;
+//    Logger() { stream.clear(); }
 
-static filebuf          log_filebuf;
-static pthread_t        log_workingThread;
-static queue<string>    log_queue;
-//static pthread_mutex_t  log_mutex_lock   = PTHREAD_MUTEX_INITIALIZER;
-//static pthread_cond_t   log_thread_cond  = PTHREAD_COND_INITIALIZER;
+//    friend Logger& operator<<( Logger&, const char* );
+//    friend Logger& operator<<( Logger&, const unsigned char& );
 
-static bool log_fileWrite ( string content )
-{
-    ostream os(&log_filebuf);
-    os << content << "\n";
-//    cout  << content << endl;
-    return true;
-}
+//    friend Logger& operator<<( Logger&, int&  );
+//    friend Logger& operator<<( Logger&, const unsigned int&  );
 
-static bool log_stdoutWrite( string content )
-{
-    cout << content + "\n";
-    return true;
-}
+//    friend Logger& operator<<( Logger&, const short&  );
+//    friend Logger& operator<<( Logger&, const unsigned short&  );
 
-static bool log_fileOpen ( string filename )
-{
-    return log_filebuf.open(filename.c_str(), ios::out | ios::app);
-}
+//    friend Logger& operator<<( Logger&, const float&  );
+//    friend Logger& operator<<( Logger&, const double&  );
 
-static string log_getPreLog(string file, int line)
-{
-    struct timeval tv;
-    time_t nowtime;
-    struct tm *nowtm;
-    char   tmbuf[256] = {0,};
-    char   buf[256] = {0,};
+//    friend Logger& operator<<( Logger&, const long&  );
+//    friend Logger& operator<<( Logger&, const unsigned long&  );
+//    friend Logger& operator<<( Logger&, const long long&  );
 
-    gettimeofday(&tv, NULL);
-    nowtime = tv.tv_sec;
-    nowtm   = localtime(&nowtime);
-    strftime(tmbuf, sizeof tmbuf, "%Y-%m-%d %H:%M:%S", nowtm);
-    snprintf(buf, sizeof buf, "%s.%ld (%-30s, %5d)", tmbuf, tv.tv_usec, file.c_str(), line);
+//    friend Logger& operator<<( Logger&, const string&  );
+//    friend Logger& operator<<( Logger&, const bool&  );
+//};
 
-    string rtn(buf);
-    return rtn;
-}
+//Logger &operator<<( Logger&, const char* );
+//Logger &operator<<( Logger&, const unsigned char* );
 
-static void* log_workerThreadFunc(void* )
-{
-//    pthread_mutex_init(&log_mutex_lock, NULL);
-    if( !log_fileOpen("./test.log") )  {
-        cout << " FAILED to open logfile..!!" << endl;
-        return NULL;
-    }
+//Logger &operator<<( Logger&, const int  );
+//Logger &operator<<( Logger&, const unsigned int  );
 
-    while(1) {
-//        cout << "running...." << endl;
-        while( !log_queue.empty() ) {
+//Logger &operator<<( Logger&, const short  );
+//Logger &operator<<( Logger&, const unsigned short  );
+
+//Logger &operator<<( Logger&, const float  );
+//Logger &operator<<( Logger&, const double  );
+
+//Logger &operator<<( Logger&, const long  );
+//Logger &operator<<( Logger&, const unsigned long  );
+//Logger &operator<<( Logger&, const long long  );
+
+//Logger &operator<<( Logger&, const string&  );
+//Logger &operator<<( Logger&, const bool  );
+//static pthread_t        log_workingThread;
+
+//static void* log_workerThreadFunc(void* )
+//{
+//    if( !log_fileOpen("./test.log") )  {
+//        cout << " FAILED to open logfile..!!" << endl;
+//        return NULL;
+//    }
+
+//    while(1) {
+////        cout << "running...." << endl;
+//        while( !log_queue.empty() ) {
 //            pthread_mutex_lock(&log_mutex_lock);
-            string ctx(log_queue.front());
-//            cout << " ctx : " << ctx << endl;
-//            cout << " log_queue.size() : " << log_queue.size() << endl;
-            log_queue.pop();
+//            string ctx(log_queue.front());
+////            cout << " ctx : " << ctx << endl;
+////            cout << " log_queue.size() : " << log_queue.size() << endl;
+//            log_queue.pop();
 //            pthread_mutex_unlock(&log_mutex_lock);
-            log_fileWrite(ctx);
-            log_stdoutWrite(ctx);
-        }
-    }
+//            log_fileWrite(ctx);
+//            log_stdoutWrite(ctx);
+//        }
+//    }
 
-    if( log_filebuf.is_open() == true )  log_filebuf.close();
+//    if( log_filebuf.is_open() == true )  log_filebuf.close();
 //    pthread_mutex_destroy(&log_mutex_lock);
-}
+//}
 
 pthread_t testThread1;
 static void* testThreadFunc1(void*)
 {
     while (1) {
-        log_queue.push(log_getPreLog(__FILENAME__, __LINE__) + " : " + __func__);
+//        LOG_INFO;
+        //log_queue.push(log_getPreLog(__FILENAME__, __LINE__) + " : " + __func__);
         usleep(10000);
     }
 }
@@ -92,7 +87,8 @@ pthread_t testThread2;
 static void* testThreadFunc2(void*)
 {
     while (1) {
-        log_queue.push(log_getPreLog(__FILENAME__, __LINE__) + " : " + __func__);
+//        LOG_WARN;
+        //log_queue.push(log_getPreLog(__FILENAME__, __LINE__) + " : " + __func__);
         usleep(30000);
     }
 }
@@ -100,7 +96,8 @@ pthread_t testThread3;
 static void* testThreadFunc3(void*)
 {
     while (1) {
-        log_queue.push(log_getPreLog(__FILENAME__, __LINE__) + " : " + __func__);
+//        LOG_DEBUG;
+        //log_queue.push(log_getPreLog(__FILENAME__, __LINE__) + " : " + __func__);
         usleep(50000);
     }
 }
@@ -108,14 +105,22 @@ static void* testThreadFunc3(void*)
 int main( int argc, char* argv[] )
 {
     (void)argc; (void)argv;
-    pthread_create(&log_workingThread, NULL, log_workerThreadFunc, NULL );
+    LOG_INIT("logutil","","");
+//    pthread_create(&log_workingThread, NULL, log_workerThreadFunc, NULL );
     pthread_create(&testThread1, NULL, testThreadFunc1, NULL );
     pthread_create(&testThread2, NULL, testThreadFunc2, NULL );
     pthread_create(&testThread3, NULL, testThreadFunc3, NULL );
     while(1){
-        log_queue.push(log_getPreLog(__FILENAME__, __LINE__) + " : " + __func__);
-        cout << log_getPreLog(__FILENAME__, __LINE__)  << endl;
-        usleep(20000);
+//        LOG_ERROR;
+//        log_queue.push(log_getPreLog(__FILENAME__, __LINE__) + " : " + __func__);
+        if( true ) LOG_ERROR << "aaaa";
+          LOG_DEBUG << "aaaa";
+          LOG_WARN  << "aaaa";
+          LOG_INFO  << "aaaa";
+//          if( log_queue.size() ) cout << log_queue.front() << endl;
+//        cout << log_queue.front() << endl;
+//        log_class << 1 << 2 << 3;
+        usleep(200);
     };
     return 0;
 }
