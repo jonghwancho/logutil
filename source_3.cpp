@@ -5,7 +5,7 @@ static void* testThreadFunc5(void*)
 {
     while (1) {
         LOG_FUNC_START;
-        usleep(5000);
+        usleep(60000);
         LOG_FUNC_END;
     }
     return nullptr;

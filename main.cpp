@@ -11,8 +11,9 @@ pthread_t testThread1;
 static void* testThreadFunc1(void*)
 {
     while (1) {
+//        cout << "thread1" << endl;
         LOG_INFO << " This is threadfunc :  " << __func__ ;
-        usleep(1000);
+        usleep(10);
     }
     return nullptr;
 }
@@ -21,8 +22,9 @@ pthread_t testThread2;
 static void* testThreadFunc2(void*)
 {
     while (1) {
+//        cout << "thread2" << endl;
         LOG_INFO << " This is threadfunc :  " << __func__ ;
-        usleep(300);
+        usleep(3000);
     }
     return nullptr;
 }
@@ -34,19 +36,28 @@ int main( int argc, char* argv[] )
 
     LOG_INIT("/app/config","/app/log","logtest","","","");
 
-    pthread_create(&testThread1, NULL, testThreadFunc1, NULL );
-    pthread_create(&testThread2, NULL, testThreadFunc2, NULL );
+//    thread testThread1;
+//    thread testThread2;
 
-    createthread3();
-    createthread4();
-    createthread5();
+//    testThread1 = thread(testThreadFunc1, (void*)nullptr);
+//    testThread2 = thread(testThreadFunc2, (void*)nullptr);
+
+//    testThread1.detach();
+//    testThread2.detach();
+
+//    pthread_create(&testThread1, NULL, testThreadFunc1, NULL );
+//    pthread_create(&testThread2, NULL, testThreadFunc2, NULL );
+
+//    createthread3();
+//    createthread4();
+//    createthread5();
 
     while(1){
         if( true )  LOG_ERROR << "aaaa";
           LOG_DEBUG << "b";
           LOG_WARN  << "c";
           LOG_INFO  << "e";
-          usleep(200);
+          usleep(200000);
     };
     return 0;
 }

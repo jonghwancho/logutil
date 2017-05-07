@@ -20,7 +20,7 @@
  * This logutil has below functions.
  * + Setting LogLevel ( Error/Warn/Info/Debug/Verb/Func ) by configuration file ( config_log.xml )
  * + Setting Console output by configuration file ( config_log.xml )
- * + Setting DLT(GENIVI) enableing by configuration file and #DEFINE DLT_LOG_ENABLE
+ * + Setting DLT(GENIVI) enableing by configuration file and #define DLT_LOG_ENABLE
  *   : For DLT Logging system, you should build your file when you compile your target file.
  * + Setting Log file Size
  *   : Logutil backup logfile as setted logfile size. ( logfile name was appended backup time )
@@ -28,22 +28,21 @@
 
 /*
  * ToDo
- * - gettting information of configuration file
- * - class warning message ( OKAY )
- * - log file size chagned by setting file ( OKAY )
  * - DLT LOG Write...!!!
  */
 
 #include <string>
-#include <string.h>
-#include <unistd.h>
 #include <queue>
 #include <fstream>
-#include <pthread.h>
-#include <sys/time.h>
-#include <dirent.h>
 #include <bitset>
 #include <sstream>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+
+#include <string.h>
+#include <unistd.h>
+#include <sys/time.h>
 
 using namespace std;
 
@@ -87,11 +86,13 @@ struct _stlogdata {
 #ifndef LOG_INIT_MAIN
 extern queue<struct _stlogdata> log_queue;
 extern bitset<LOG_LEVEL_MAX>    log_level;
-extern pthread_mutex_t          log_mutex_lock;
+extern mutex                    log_mutex;
+extern condition_variable       log_cond;
 #else
 queue<struct _stlogdata>        log_queue;
 bitset<LOG_LEVEL_MAX>           log_level;
-pthread_mutex_t                 log_mutex_lock = PTHREAD_MUTEX_INITIALIZER;
+static mutex                    log_mutex;
+static condition_variable       log_cond;
 #endif
 
 static stringstream             log_ss;
@@ -132,9 +133,10 @@ struct _stlogstream {
             data.level   = level;
             data.logdata = log_ss.str();
             log_queue.push(data);
+            log_cond.notify_all();
             log_ss.str("");
             level = LOG_LEVEL_DLT;
-            pthread_mutex_unlock(&log_mutex_lock);
+            log_mutex.unlock();
         }
     }
 };
@@ -152,34 +154,34 @@ _stlogstream operator<<(_stlogstream && o, T const & x)
 template <typename T>
 _stlogstream operator<<(const _clogssbase & o, T const & x)
 {
-    pthread_mutex_lock(&log_mutex_lock);
+    log_mutex.lock();
     return move(_stlogstream(o.level) << x);
 }
 #endif
 
 #ifdef LOG_INIT_MAIN
-static filebuf                  log_filebuf;
+static filebuf                  log_file_buffer;
 static string                   log_file_fullname;
-static ofstream                 log_fstream;
+static ofstream                 log_file_stream;
 static long long                log_file_maxsize;
-pthread_t                       log_workingThread;
+static string                   log_file_path;
+
+static string                   log_config_path;
+static string                   log_config_file;
+static string                   log_module_name;
+
+static thread                   log_workingThread;
+static thread                   log_configMonitorThread;
 
 static bool   log_fileWrite  ( string );
 static bool   log_stdoutWrite( string );
 static bool   log_fileOpen   ( string );
-static void*  log_workerThreadFunc(void* );
+
+static void   log_workerThreadFunc(void* );
+static void   log_configMonitorThreadFunc(void* );
+
 static bool   log_initFunc   ( string, string, string, string, string, string );
 //static pthread_cond_t   log_thread_cond  = PTHREAD_COND_INITIALIZER;
-
-#ifndef LOG_FILEWRITE_FUNC
-#define LOG_FILEWRITE_FUNC
-static bool log_fileWrite ( string content )
-{
-    log_fstream << content << "file_size = " << log_fstream.tellp() << "\n";
-    log_fstream.flush();
-    return true;
-}
-#endif
 
 #ifndef LOG_FILEWRITE_CHANGE_FUNC
 #define LOG_FILEWRITE_CHNAGE_FUNC
@@ -198,14 +200,14 @@ static bool log_fileChange()
     strBackupFileName.append(log_file_fullname);
     strBackupFileName.append(tmbuf);
 
-    if( log_fstream.is_open() == true ) {
-        log_fstream << "=========================================================================\n";
-        log_fstream << " This log file was truncated at this point" << tmbuf << "\n";
-        log_fstream << "=========================================================================\n";
-        log_fstream.flush();
+    if( log_file_stream.is_open() == true ) {
+        log_file_stream << "=========================================================================\n";
+        log_file_stream << " This log file was truncated at this point" << tmbuf << "\n";
+        log_file_stream << "=========================================================================\n";
+        log_file_stream.flush();
     }
 
-    log_fstream.close();
+    log_file_stream.close();
 
     if( rename( log_file_fullname.c_str(), strBackupFileName.c_str() ) != 0 ) {
         cout << " Cannot change to old file : " << strBackupFileName << "\n";
@@ -215,6 +217,31 @@ static bool log_fileChange()
 }
 #endif
 
+#ifndef LOG_FILEOPEN_FUNC
+#define LOG_FILEOPEN_FUNC
+static bool log_fileOpen ( string filename )
+{
+    log_file_stream.open(filename.c_str(), ios::out | ios::app);
+    return log_file_stream.is_open();
+}
+#endif
+
+/*
+ * Output Log File function
+ */
+#ifndef LOG_FILEWRITE_FUNC
+#define LOG_FILEWRITE_FUNC
+static bool log_fileWrite ( string content )
+{
+    log_file_stream << content + "\n";
+    log_file_stream.flush();
+    return true;
+}
+#endif
+
+/*
+ * Printing Console function
+ */
 #ifndef LOG_STDOUTWRITE_FUNC
 #define LOG_STDOUTWRITE_FUNC
 static bool log_stdoutWrite( string content )
@@ -224,12 +251,14 @@ static bool log_stdoutWrite( string content )
 }
 #endif
 
+/*
+ * Output DLT Logging system function
+ */
 #ifdef DLT_LOG_ENABLE
 #ifndef LOG_DLTWRITE_FUNC
 #define LOG_DLTWRITE_FUNC
 static bool log_dltWrite( LOG_LEVEL_E l, string content )
 {
-//    cout << "level = " << l << ", content = " << content << endl;
     ssize_t pos;
     switch(l) {
     case LOG_LEVEL_DEBUG :
@@ -278,46 +307,6 @@ static bool log_dltWrite( LOG_LEVEL_E l, string content )
 #endif
 #endif // #ifdef DLT_LOG_ENABLE
 
-
-#ifndef LOG_FILEOPEN_FUNC
-#define LOG_FILEOPEN_FUNC
-static bool log_fileOpen ( string filename )
-{
-    log_fstream.open(filename.c_str(), ios::out | ios::app);
-    return log_fstream.is_open();
-    //return log_filebuf.open(filename.c_str(), ios::out | ios::app);
-}
-#endif
-
-#ifndef LOG_WORKERTHREAD_FUNC
-#define LOG_WORKERTHREAD_FUNC
-void* log_workerThreadFunc(void*)
-{
-    if( !log_fileOpen(log_file_fullname) )  {
-        cout << " FAILED to open logfile..!!" << endl;
-        return NULL;
-    }
-
-    while(true) {
-        while( !log_queue.empty() ) {
-            pthread_mutex_lock(&log_mutex_lock);
-            struct _stlogdata ctx = log_queue.front();
-            log_queue.pop();
-            pthread_mutex_unlock(&log_mutex_lock);
-            if( log_level[LOG_LEVEL_CONSOLE] ) log_stdoutWrite(ctx.logdata);
-            if( log_fstream.tellp() > log_file_maxsize ) log_fileChange();
-            log_fileWrite(ctx.logdata);
-#ifdef DLT_LOG_ENABLE
-            log_dltWrite(ctx.level, ctx.logdata);
-#endif
-        }
-    }
-
-    if( log_filebuf.is_open() == true )  log_filebuf.close();
-    pthread_mutex_destroy(&log_mutex_lock);
-}
-#endif
-
 #ifndef LOG_CONFIG_READ_FUNC
 #define LOG_CONFIG_READ_FUNC
 static bitset<LOG_LEVEL_MAX> log_configReadFunc(string configfilenamefull, string modulename )
@@ -353,7 +342,6 @@ static bitset<LOG_LEVEL_MAX> log_configReadFunc(string configfilenamefull, strin
         size_close_xml.append("</"); size_close_xml.append("filesize");  size_close_xml.append(">");
 
         while( getline( stream_val_, str_val_ )) {
-//            cout << "str_val_ : " << str_val_ << endl;
 
             module_found_open  = str_val_.find(module_open_xml);
             module_found_close = str_val_.find(module_close_xml);
@@ -366,18 +354,15 @@ static bitset<LOG_LEVEL_MAX> log_configReadFunc(string configfilenamefull, strin
 
                 str_val_.erase(0, (module_found_open + module_open_xml.size()));
                 str_val_.erase( (module_found_close - (module_found_open + module_open_xml.size() )), module_close_xml.size());
-//                cout << "str_val_ : " << str_val_ << ", module_found_open = " << module_found_open << ", module_found_close = " << module_found_close << endl;
 
                 found_0x = str_val_.find("0x");
 
                 if( found_0x != (ssize_t)string::npos ) {
                     str_val_.erase(found_0x, sizeof("0"));
-//                    cout << "str_val_ : " << str_val_ << ", found_0x = " << found_0x << ", module_found_close = " << module_found_close << endl;
 
                     for( int idx = 0 ; idx < (int)str_val_.size() ; idx++ ) {
                         if( str_val_[idx] == 'F' || str_val_[idx] == 'f' ) {
                             bit_set_val_.set( (LOG_LEVEL_MAX-1) - idx, true );
-//                            cout << "str_val_[idx] : " << idx << ", set true" << endl;
                         }
                     }
                 }
@@ -386,7 +371,6 @@ static bitset<LOG_LEVEL_MAX> log_configReadFunc(string configfilenamefull, strin
                      size_found_close != (ssize_t)string::npos ) {
                 str_val_.erase(0, (size_found_open + size_open_xml.size()));
                 str_val_.erase( (size_found_close - (size_found_open + size_open_xml.size() )), size_close_xml.size());
-//                cout << "str_val_ : " << str_val_ << ", size_found_open = " << size_found_open << ", size_found_close = " << size_found_close << endl;
 
                 log_file_maxsize = stoll(str_val_.c_str());
             }
@@ -407,20 +391,132 @@ static bitset<LOG_LEVEL_MAX> log_configReadFunc(string configfilenamefull, strin
 }
 #endif
 
+#ifndef LOG_CONFIG_MONITOR_THREAD_FUNC
+#define LOG_CONFIG_MONITOR_THREAD_FUNC
+#include <fcntl.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/inotify.h>
+
+#define EVENT_SIZE ( sizeof ( struct inotify_event ) )
+#define BUF_LEN	   ( 1024 * ( EVENT_SIZE + 16 ) )
+
+void log_configMonitorThreadFunc(void*)
+{
+    int     length, i = 0;
+    int     fd;
+    int     wd;
+    char    buffer[BUF_LEN];
+
+    fd = inotify_init();
+
+    if( fd < 0 ) {
+        perror( "inotify_init" );
+    }
+
+    wd = inotify_add_watch( fd, log_config_path.c_str(), IN_MODIFY );
+
+    cout << " Start configuration file monitoring..!! " << endl;
+    cout << " Monitoring File = " << log_config_path << "/config_log.xml" << endl;
+
+    while(true) {
+
+        length = read( fd, buffer , BUF_LEN );
+
+        if( length < 0 ) {
+            perror( "read" );
+        }
+
+        while( i < length ) {
+            struct inotify_event *event = ( struct inotify_event * ) &buffer[i];
+
+            if( event->len ) {
+                if( event->mask & IN_MODIFY ) {
+                    //cout << " event name : " <<  event->name << endl;
+                    if( event->mask & IN_ISDIR ) {
+                        //printf(" The directory %s was modified.\n", event->name );
+                    }
+                    else {
+                        string event_str_(event->name);
+
+                        if( (ssize_t)event_str_.find(".swp") != (ssize_t)string::npos )
+                            break;
+                        else if( (ssize_t)event_str_.find("config_log.xml") != (ssize_t)string::npos ) {
+                            log_level = log_configReadFunc(log_config_file, log_module_name);
+                            cout << "The configuration file " << event->name << " was modified..!!" << endl;
+                            cout << " The loglevel was changed : " << log_level.to_string() << endl;
+                            if( log_level[LOG_LEVEL_DLT] )      cout << "log level DLT      is set" << endl;
+                            if( log_level[LOG_LEVEL_CONSOLE] )  cout << "log level CONSOLE  is set" << endl;
+                            if( log_level[LOG_LEVEL_FUNCTION] ) cout << "log level FUNCTION is set" << endl;
+                            if( log_level[LOG_LEVEL_VERB] )     cout << "log level VERB     is set" << endl;
+                            if( log_level[LOG_LEVEL_DEBUG] )    cout << "log level DEBUG    is set" << endl;
+                            if( log_level[LOG_LEVEL_INFO] )     cout << "log level INFO     is set" << endl;
+                            if( log_level[LOG_LEVEL_WARN] )     cout << "log level WARN     is set" << endl;
+                            if( log_level[LOG_LEVEL_ERROR] )    cout << "log level ERROR    is set" << endl;
+                        }
+                    }
+                }
+            }
+            i += EVENT_SIZE + event->len;
+        }
+        i = 0;
+    }
+
+    (void) inotify_rm_watch(fd, wd);
+    (void) close(fd);
+}
+#endif
+
+#ifndef LOG_WORKERTHREAD_FUNC
+#define LOG_WORKERTHREAD_FUNC
+//void* log_workerThreadFunc(void*)
+void log_workerThreadFunc(void*)
+{
+    if( !log_fileOpen(log_file_fullname) )  {
+        cout << " FAILED to open logfile..!!" << endl;
+        return;// NULL;
+    }
+
+    while(true) {
+        std::unique_lock<std::mutex> lck(log_mutex);
+        log_cond.wait(lck);
+        while( !log_queue.empty() ) {
+            struct _stlogdata ctx = log_queue.front();
+            log_queue.pop();
+            if( log_level[LOG_LEVEL_CONSOLE] ) log_stdoutWrite(ctx.logdata);
+            if( log_file_stream.tellp() > log_file_maxsize ) log_fileChange();
+            log_fileWrite(ctx.logdata);
+#ifdef DLT_LOG_ENABLE
+            log_dltWrite(ctx.level, ctx.logdata);
+#endif
+        }
+    }
+
+    if( log_file_buffer.is_open() == true )  log_file_buffer.close();
+}
+#endif
+
 #ifndef LOG_INIT_FUNC
 #define LOG_INIF_FUNC
-inline bool log_initFunc( string log_config_file_path, string log_file_path, string log_module_name, string/*appdesc*/, string/*ctxname*/, string/*ctxdesc*/ )
+inline bool log_initFunc( string config_file_path, string file_path, string module_name, string/*appdesc*/, string/*ctxname*/, string/*ctxdesc*/ )
 {
     /* config file reading */
-    string  log_config_file(log_config_file_path + "/config_log.xml");
-    log_level = log_configReadFunc(log_config_file, log_module_name);
+    log_config_path = config_file_path;
+    log_config_file = config_file_path + "/config_log.xml";
+
+    log_module_name = module_name;
+    log_file_path   = file_path;
+    log_level = log_configReadFunc(log_config_file, module_name);
 
     /* log file settting */
-    log_file_fullname = log_file_path + "/" + log_module_name + ".log";
+    log_file_fullname = file_path + "/" + module_name + ".log";
 
     /* log thread trigger */
-    pthread_mutex_init(&log_mutex_lock, NULL);
-    pthread_create(&log_workingThread, NULL, log_workerThreadFunc, NULL );
+    log_workingThread       = thread(log_workerThreadFunc, (void*)nullptr);
+    log_configMonitorThread = thread(log_configMonitorThreadFunc, (void*)nullptr);
+
+    log_workingThread.detach();
+    log_configMonitorThread.detach();
 
     return true;
 }
