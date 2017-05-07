@@ -12,7 +12,7 @@ LIBS += -lpthread
 
 HEADERS += \
     source_1.h \
-    logutil_main.h \
-    logutil.h \
     source_2.h \
-    source_3.h
+    source_3.h \
+    logutil_sub.h \
+    logutil.h
